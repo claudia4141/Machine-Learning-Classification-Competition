@@ -1,0 +1,486 @@
+---
+title: "Classification Challenge Code"
+author: "<18030>"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+set.seed(1)
+```
+
+##load all the libraries
+```{r, message=FALSE}
+library("tidyverse")
+library("tidytext")
+library("quanteda")
+library("quanteda.textmodels")
+library("glmnet")
+library("caret")
+library("Rtsne")
+library("word2vec")
+library("pdftools")
+library("rword2vec")
+library("tm")
+library("ggplot2")
+library(quanteda.textstats)
+```
+
+## Load dataset
+```{r}
+train <- read.csv("train.csv", header = TRUE)
+train <- train %>%
+  #remove line breaks
+  mutate(text = str_replace_all(text, "[\r\n]", ""))
+head(train)
+test <- read.csv("test.csv", header = TRUE)
+test <- test %>%
+  mutate(text = str_replace_all(text, "[\r\n]", ""))
+head(test)
+```
+
+## spliting data into training and testing set
+```{r}
+#80% fro train 20% for testing 
+idx <- sample(1:nrow(train), 0.8*nrow(train))
+cor_train <- corpus(train)
+
+#real testing set
+colnames(test) <- c("id", "text")
+cor_test <- corpus(test)
+```
+
+## Functions
+```{r}
+#function to get F1  score(actual and pred)
+F1 <- function(table, verbose = TRUE){
+  TP <- table[2,2]
+  FP <- table[1,2]
+  FN <- table[2,1]
+  precision <- TP / (TP + FP)
+  recall <- TP / (TP + FN)
+  F1 <- 2*(precision*recall/(precision+recall))
+  return (F1)
+}
+
+#function to get glm models
+glm_model <- function(model){
+  index_best <- which(model$lambda == model$lambda.min)
+  beta <- model$glmnet.fit$beta[, index_best]
+  head(sort(beta, decreasing = TRUE), 20)
+}
+
+#function to predict model
+pred_mod <- function(lasso, dfm){
+  #dfm_matched <- dfm_match(testdfm, features= featnames(traindfm))
+  pred <- predict(lasso, dfm[-idx,], type = "response", s =
+                    lasso$lambda.min)
+  predicted_class <- as.factor(predict(lasso, dfm[-idx,],type =
+                                         "class"))
+  tab_class <- table(train$attack[-idx], predicted_class)
+  #mis_error <- mean(pred_mod(cv_lasso, custom_toxicdfm) != train$attack[testing])
+  return(F1(tab_class))
+}
+```
+
+
+
+
+
+## Exploring pre-processing
+Explore each potential features and record the cv error
+```{r}
+# 1) no-preprocessing = benchmark model
+toks_train <- tokens(cor_train)
+dfm_train <- dfm(toks_train)
+lasso <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso) #the first word is obviously wrong, others seems ok
+pred_mod(lasso, dfm_train) #F1 score:0.3673966
+```
+
+
+```{r}
+#2) remove stopwords 
+toks_train <- tokens(cor_train) %>%
+  tokens_remove(pattern = stopwords("en"))
+dfm_train <- dfm(toks_train)
+lasso_stop <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_stop) #most of them are correct
+pred_mod(lasso_stop) #F1 score:0.3403727
+```
+
+
+```{r}
+#3) remove numbers
+toks_train <- tokens(cor_train, remove_numbers = TRUE) %>%
+  tokens_remove(pattern = stopwords("en"))
+dfm_train <- dfm(toks_train)
+lasso_num <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+
+glm_model(lasso_num) #doesnt make any difference
+pred_mod(lasso_num, dfm_train) #F1 score:0.3403727
+```
+
+
+```{r}
+#4) remove url
+toks_train <- tokens(cor_train, remove_url = TRUE) %>%
+  tokens_remove(pattern = stopwords("en"))
+dfm_train <- dfm(toks_train)
+lasso_url <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_url)#doesnt make any difference
+pred_mod(lasso_url, dfm_train) #F1 score: 0.3403727
+```
+
+
+```{r}
+#5) remove symbols
+toks_train <- tokens(cor_train, remove_symbols = TRUE) %>%
+  tokens_remove(pattern = stopwords("en"))
+dfm_train <- dfm(toks_train)
+lasso_sym<- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_sym)#no difference
+pred_mod(lasso_sym, dfm_train) #F1 score:0.3403727
+```
+
+
+```{r}
+#6) remove punctuation
+toks_train <- tokens(cor_train, remove_punct = TRUE) %>%
+  tokens_remove(pattern = stopwords("en"))
+dfm_train <- dfm(toks_train)
+lasso_punct <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_punct) #no difference
+pred_mod(lasso_punct, dfm_train) #F1 score:0.3161857
+```
+
+
+```{r}
+#7) remove separators
+toks_train <- tokens(cor_train, remove_separators = TRUE) %>%
+  tokens_remove(pattern = stopwords("en"))
+dfm_train <- dfm(toks_train)
+lasso_sep <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_sep) #no difference
+pred_mod(lasso_sep, dfm_train) #F1 score:0.3472906
+```
+
+
+```{r}
+#8) tf-idf 
+toks_train <- tokens(cor_train) %>%
+  tokens_remove(pattern = stopwords("en"))
+dfm_train <- dfm(toks_train)
+dfm_train <- dfm_weight(dfm_train, scheme = "prop")
+lasso_idf <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_idf)
+pred_mod(lasso_idf, dfm_train) #F1 score:0.3631902
+```
+
+
+```{r}
+#9) stemming
+toks_train <- tokens(cor_train) %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+dfm_train <- dfm(toks_train)
+
+lasso_stem <- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx],
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_stem) #?frankenwiki ?tangerinesâ  ?melbournestar
+pred_mod(lasso_stem, dfm_train) #F1 score: 0.3937575
+```
+
+#final pre-processed dfm
+```{r}
+#create tokens for training dfm
+toks_train <- tokens(cor_train, remove_separators = TRUE,remove_punct = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_numbers = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+toks_train <- tokens_ngrams(toks_train, n=1:3) 
+dfm_train <- dfm(toks_train)
+dfm_train <- dfm_weight(dfm_train, scheme = "prop")
+dfm_train <- dfm_trim(dfm_train, min_docfreq  = 5)
+```
+
+
+
+```{r}
+lasso_all<- cv.glmnet(x = dfm_train[idx,],
+                   y = docvars(cor_train, "attack")[idx], 
+                   alpha = 1,
+                   nfold = 10,
+                   family = "binomial")
+glm_model(lasso_all)
+pred <- predict(lasso_all, dfm_train[-idx,], type = "response", s =
+                    lasso_all$lambda.min)
+predicted_class <- as.factor(predict(lasso_all, dfm_train[-idx,],type ="class"))]
+#training MSE
+train_mse <- mean(lasso_all$lambda)
+train_mse
+#testing MSE
+test_mse <- mean((pred - train$attack[-idx])^2)
+test_mse
+pred_mod(lasso_all, dfm_train) #F1 score:0.4369748
+
+```
+
+
+
+## submission 2 - 0.59582 
+```{r}
+#testing set
+testtoks <- tokens(testcorp, remove_numbers = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_separators = TRUE) %>%
+  tokens_remove(pattern = stopwords("en"))
+testdfm <- dfm(testtoks)
+
+dfm_matched <- dfm_match(testdfm, features = featnames(custom_toxicdfm))
+pred <- predict(cv_lasso, dfm_matched, type = "response", s = lasso$lambda.min)
+predicted_class <- as.factor(predict(cv_lasso, dfm_matched, type = "class"))
+test$attack <- predicted_class
+#head(test)
+write.csv(test, "submission-2.csv")
+```
+
+## submission 3 - 0.60624 (with neg senti)
+```{r}
+testtoks <- tokens(testcorp, remove_numbers = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_separators = TRUE) %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+testdfm <- dfm(testtoks)
+
+dfm_matched <- dfm_match(testdfm, features = featnames(custom_toxicdfm))
+pred <- predict(cv_lasso, dfm_matched, type = "response", s = lasso$lambda.min)
+predicted_class <- as.factor(predict(cv_lasso, dfm_matched, type = "class"))
+test$attack <- predicted_class
+write.csv(test, "submission-3.csv")
+```
+
+## submission 4 - 0.56764 (with neg senti, exc, upp)
+```{r}
+tok_test <- tokens(corp_test, remove_numbers = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_separators = TRUE) %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+dfm_test <- dfm(tok_test)
+dfm_matched <- dfm_match(dfm_test, features = featnames(custom_toxicdfm))
+preds <- predict(lasso_all, dfm_matched, type="class")
+predicted_class <- as.factor(predict(lasso_all, dfm_matched, type = "class"))
+test$attack <- predicted_class
+write.csv(test, "submission-4.csv")
+```
+
+## Submission 5 - 0.07490 (with word embedding and neg senti)
+```{r}
+rf <- xgboost(data = X[training,], 
+    label = train$attack, 
+        max.depth = 1,
+    eta = 2, 
+    nthread = 4,
+    nround = 500,
+        print_every_n=100L,
+    objective = "binary:logistic")
+
+preds <- predict(rf, X[test_idx,])
+predicted_class <- as.factor(predict(rf, X[test_idx,], type = "class"))
+predicted_class <- data.frame(predicted_class)
+predicted_class <- predicted_class %>%
+   mutate(predicted_class = str_replace_all(predicted_class, "3.05417074741854e-06", "1")) %>%
+   mutate(predicted_class = str_replace_all(predicted_class, "9.06937129911967e-05", "1")) %>%
+  mutate(predicted_class = str_replace_all(predicted_class, "1.98830101773013e-19", "1")) %>%
+  mutate(predicted_class = str_replace_all(predicted_class, "9.78652496996801e-06", "1"))
+predicted_class <- as.vector(predicted_class$predicted_class)
+test$attack <- predicted_class
+test$text <- NULL
+head(test)
+write.csv(test, "submission-5.csv")
+```
+## submission 6 - 0.25675 nb with neg senti
+```{r}
+dfmmat <- dfm_match(dfm_test, features = featnames(dfm_train))
+docvars(dfm_test, "attack") <- NA
+preds <- predict(nb, newdata = dfmmat)
+predicted_class <- as.factor(predict(nb, dfmmat, type = "class"))
+test$attack <- predicted_class
+head(test)
+write.csv(test, "submission-6.csv")
+```
+
+## submission 7 - 0.465
+```{r}
+train_df <- data.frame(id = train$id, text = train$text)
+test_df <- data.frame(id = test$id, text = test$text)
+all_df <- rbind(train_df, test_df)
+cor_all <- corpus(all_df)
+toks_all <- tokens(cor_all, remove_separators = TRUE,remove_punct = TRUE) %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+
+dfm_all <- dfm(toks_all) 
+dfm_all<- dfm_trim(dfm_all, min_docfreq = 5)
+dfm_all <- dfm_weight(dfm_all, scheme = "prop")
+
+custom_toxicdfm <- cbind(dfm_all, neg_dfm, matrix(seq_upp), matrix(seq_exc))
+                         #, matrix(freq_length), matrix(seq_exc), matrix(seq_que), matrix(seq_upp))
+cv_lasso <- cv.glmnet(x = custom_toxicdfm[1:15000,] ,
+                   y = train$attack,
+                   alpha = 1,
+                   nfold = 10,
+                   type.measure = "class",
+                   family = "binomial")
+
+#testing on the smaller testing set from training 
+glm_model(cv_lasso)
+preds <- predict(cv_lasso, custom_toxicdfm[15001:115000,], type="class")
+predicted_class <- as.factor(predict(cv_lasso,custom_toxicdfm[15001:115000,] , type = "class"))
+test$attack <- predicted_class
+write.csv(test, "submission-7.csv")
+```
+## submission 8 -0.27739
+```{r}
+testtoks <- tokens(testcorp, remove_numbers = TRUE,  remove_url = TRUE, remove_separators = TRUE) %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+testdfm <- dfm(testtoks)
+
+dfm_matched <- dfm_match(testdfm, features = featnames(custom_toxicdfm))
+preds <- predict(cv_lasso, dfm_matched, type="class")
+predicted_class <- as.factor(predict(cv_lasso, dfm_matched, type = "class"))
+test$attack <- predicted_class
+write.csv(test, "submission-8.csv")
+```
+
+##submission 9 - 0.63573 nb with negative senti and features
+```{r}
+dfm_train <- cbind(dfm_train, neg_dfm, matrix(freq_length), matrix(freq_exc), matrix(freq_ast), matrix(freq_upp))
+
+toks_test <- tokens(cor_test, remove_separators = TRUE,remove_punct = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_numbers = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+c <- tokens_ngrams(toks_test, n=1:3) 
+dfm_test <- dfm(c)
+dfm_test<- dfm_trim(dfm_test, min_docfreq = 5)
+dfm_match <- dfm_match(dfm_test, features = featnames(dfm_train))
+preds <- predict(nb, newdata = dfm_match)
+test$attack <- preds
+# sample(test$text[which(test$attack == 1)], 10)
+write.csv(test, "submission-9.csv")
+```
+
+##submission 10 - 0.22857 (word embedding)
+```{r}
+rf <- xgboost(data = X[idx,], 
+    label = docvars(cor_train, "attack")[idx], 
+    max.depth = bestDepth,
+    eta = bestEta, 
+    nthread = 4,
+    nround = 500,
+        print_every_n=100L,
+    objective = "binary:logistic")
+
+preds <- predict(rf, X[-idx,])
+mean(preds)
+predicted_class <- factor(if_else(preds >  0.2, 1, 0))
+tab <- table(docvars(cor_train, "attack")[-idx], predicted_class)
+F1(tab) #F1 score:0.6403026
+
+
+#test
+X <- as.dfm(X)
+Y <- dfm_match(dfm_test, features = featnames(X))
+preds <- predict(rf, Y)
+mean(preds)
+predicted_class <- factor(if_else(preds >  0.1, 1, 0))
+test$attack <- predicted_class
+write.csv(test, "submission-10.csv")
+  
+```
+
+##submission 11 - 0.62341 svm
+```{r}
+#svm model
+mod <- svm(x=dfm_train[idx,], y=factor(train$attack[idx]),
+           kernel="linear", cost=1)
+
+svm_pred <- predict(mod, newdata = dfm_train[-idx,])
+confusion <-  table(svm_pred, train$attack[-idx])
+F1(confusion) #f1 score: 6195563 without custom features
+F1(confusion) #f1 score: 6213115 with cf
+
+svm_pred <- predict(mod, newdata = dfm_match)
+test$attack <- svm_pred
+write.csv(test, "submission-11.csv")
+```
+
+
+##submission 12 - 0.62554 just nb model
+```{r}
+toks_test <- tokens(cor_test, remove_separators = TRUE,remove_punct = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_numbers = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+c <- tokens_ngrams(toks_test, n=1:3) 
+dfm_test <- dfm(c)
+dfm_test<- dfm_trim(dfm_test, min_docfreq = 5)
+dfm_match <- dfm_match(dfm_test, features = featnames(dfm_train))
+preds <- predict(nb, newdata = dfm_match)
+test$attack <- preds
+# sample(test$text[which(test$attack == 1)], 10)
+write.csv(test, "submission-12.csv") #F1 score 0.6599569
+```
+##submission 13 - 0.63723 neg senti and all features
+```{r}
+toks_test <- tokens(cor_test, remove_separators = TRUE,remove_punct = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_numbers = TRUE) %>%
+  tokens_tolower() %>%  
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+c <- tokens_ngrams(toks_test, n=1:3) 
+dfm_test <- dfm(c)
+dfm_test<- dfm_trim(dfm_test, min_docfreq = 5)
+dfm_test <- dfm_weight(dfm_test, scheme = "prop")
+dfm_match <- dfm_match(dfm_test, features = featnames(dfm_train))
+preds <- predict(nb, newdata = dfm_match)
+test$attack <- preds
+write.csv(test, "submission-13.csv")
+```
+
+

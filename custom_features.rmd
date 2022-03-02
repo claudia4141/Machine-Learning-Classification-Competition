@@ -1,0 +1,241 @@
+---
+title: "custome features"
+output: html_notebook
+---
+
+## Exploring data and customise features
+what I observe: negative word, excessive use of exclamation mark, question mark , obscenity, continued use of capital letters(more than three capital letters, negative word)
+```{r}
+# #exploring features of  toxic comment
+# sample(train$text[which(train$attack == 1)], 2)
+# custom_features <- train %>% 
+#   select(id, text) %>% 
+#   mutate(length <- str_length(text),
+#          upp <- str_count(text, "[A-Z]"),
+#          upp_con <- str_count(text, "[A-Z]{2,}"),
+#          upp_prop <- upp / length,
+#          exc <- str_count(text, fixed("!")),
+#          exc_con <- str_count(text, "!{2,}"),
+#          que <- str_count(text, fixed("?")),
+#          ast <- str_count(text, fixed("*")),
+#          ast_con <- str_count(text, "\\*{2,}")) %>% 
+#   select(-id)
+# head(custom_features)
+# 
+# custom_features <- custom_features %>%
+#   select(-text)
+# 
+# train <- cbind(train, custom_features)
+```
+
+
+```{r}
+length_toxic <- str_count(train$text[which(train$attack == 1)])
+length_all <- str_count(train$text)
+#plot a distribution graph to see if there is any pattern
+#As illustrated as the graph below, most of the toxic comment has a length of 0-500 characters
+```
+
+
+```{r}
+png("length of toxic comment.png")
+hist(length_toxic, breaks=20, xlim= c(0,3000))
+dev.off()
+```
+
+
+```{r}
+mean(length_toxic)
+freq_length <- factor(if_else(length_all <= 500, 1, 0))
+#total number of texts contain with a proportion more than 0.35
+sum(freq_length == 1)
+```
+
+## Exclamation 
+```{r}
+#count the number of exclamation mark in toxic and non-toxic comments
+all_exc <- str_count(train$text, "!")
+toxic_exc <- sum(str_count(train$text[which(train$attack == 1)], "!"))
+toxic_exc
+nontox_exc <- sum(str_count(train$text[which(train$attack == 0)], "!"))
+nontox_exc
+```
+
+
+```{r}
+#plot a density graph to see the difference 
+png("number of exclamation mark.png")
+df <- c(5854, 3179)
+N <- c("toxic_comments", "non-toxic_comments")
+barplot(df, names.arg=N,xlab="Types of Comments", ylab="Number of Exclamation Mark", main="Number of Exclamation Mark in Different Types of Comments")
+dev.off()
+```
+
+
+```{r}
+#sequence of exclamation mark(by observation, toxic comments usually contain usually more than 2 continued exclamation mark)
+seq_exc <- grepl("!{2,}", train$text)
+prop.table(table(seq_exc = seq_exc, attack = train$attack), margin = 2)#we can see that attack comments contain more sequence of exclamation mark than non-attack comment
+exc_prop <- str_count(train$text, "!")/nchar(train$text)
+#calculating the mean proportion uppercase letters used in toxic comment. Use this number as a border line to classify toxic and non-toxic comment
+mean(str_count(train$text[which(train$attack == 1)], "!{2,}")/nchar(train$text[which(train$attack == 1)]))
+freq_exc <- factor(if_else(exc_prop > 0.0008, 1, 0))
+sum(freq_exc == 1)
+```
+## Question (not using this)
+
+```{r}
+#count the number of question mark in toxic and non-toxic comment
+all_que <- str_count(train$text, "\\?")
+toxic_que <- sum(str_count(train$text[which(train$attack == 1)], "\\?"))
+toxic_que
+nontox_que <- sum(str_count(train$text[which(train$attack == 0)], "\\?"))
+nontox_que
+```
+
+
+```{r}
+png("number of question mark.png")
+df <- c(2339, 5256)
+N <- c("toxic_comments", "non-toxic_comments")
+barplot(df, names.arg=N,xlab="Types of Comments", ylab="Number of Question Mark", main="Number of Question Mark in Different Types of Comments")
+dev.off()
+```
+
+
+```{r}
+#the result is surprising as the toxic comments contain a lot less question mark than non-toxic one
+seq_que <- grepl("\\?{2,}", train$text)
+prop.table(table(seq_que = seq_que, attack = train$attack), margin = 2)#we can see that attack comments contain more sequence of question mark than non-attack comment
+que_prop <- str_count(train$text, "\\?")/nchar(train$text)
+#calculating the mean proportion uppercase letters used in toxic comment. Use this number as a border line to classify toxic and non-toxic comment
+attack_prop <- mean(str_count(train$text[which(train$attack == 1)], "\\?{2,}")/nchar(train$text[which(train$attack == 1)]))
+#classifying text 1 for attack, 0 for non-attack
+freq_que <- factor(if_else(exc_prop > attack_prop, 1, 0))
+sum(freq_que == 1)
+```
+
+## Asterisk
+```{r}
+#asterisk usually represent obscenity
+all_ast <- str_count(train$text, "\\*")
+toxic_ast <- sum(str_count(train$text[which(train$attack == 1)], "\\*"))
+toxic_ast
+nontox_ast <- sum(str_count(train$text[which(train$attack == 0)], "\\*"))
+nontox_ast
+```
+
+
+```{r}
+png("number of asterisk.png")
+df <- c(536,2796)
+N <- c("toxic_comments", "non-toxic_comments")
+barplot(df, names.arg=N,xlab="Types of Comments", ylab="Number of Asterisk", main="Number of Asterisk in Different Types of Comments")
+dev.off()
+```
+
+
+```{r}
+#sequence of asterisk
+seq_ast <- str_count(train$text, "\\*{2,}")
+prop.table(table(seq_ast = seq_ast, attack = train$attack), margin = 2)#toxic comment contains a lot more of sequence asterisk
+ast_prop <- str_count(train$text, "\\*")/nchar(train$text)
+#calculating the mean proportion asterisk used in toxic comment. Use this number as a border line to classify toxic and non-toxic comment
+tox_ast_prop <- mean(str_count(train$text[which(train$attack == 1)], "\\*{2,}")/nchar(train$text[which(train$attack == 1)]))
+freq_ast <- factor(if_else(ast_prop > tox_ast_prop, 1, 0))
+#total number of texts contain with a proportion more than 0.35
+sum(freq_ast == 1)
+```
+## Uppercase
+```{r}
+toxic_upp <- sum(str_count(train$text[which(train$attack == 1)], "[A-Z]"))
+toxic_upp
+nontox_upp <- sum(str_count(train$text[which(train$attack == 0)], "[A-Z]"))
+nontox_upp
+```
+
+
+```{r}
+png("number of uppeercase.png")
+df <- c(129577,172667)
+N <- c("toxic_comments", "non-toxic_comments")
+barplot(df, names.arg=N,xlab="Types of Comments", ylab="Number of Asterisk", main="Number of Uppercase Letters in  Different Types of Comments")
+dev.off()
+```
+
+
+```{r}
+#three consective capital letters
+seq_upp <- grepl("[A-Z]{3,}", train$text, ignore.case = TRUE)
+upp_table <- prop.table(table(seq_upp = seq_upp, attack = train$attack), margin = 2)#toxic comments use more uppercase letters together
+#the proportion of uppercase used in all texts and attack
+upp_prop <- str_count(train$text, "[A-Z]")/nchar(train$text)
+#calculating the mean proportion uppercase letters used in toxic comment. Use this number as a border line to classify toxic and non-toxic comment
+mean(str_count(train$text[which(train$attack == 1)], "[A-Z]{3,}")/nchar(train$text[which(train$attack == 1)]))
+freq_upp <- factor(if_else(upp_prop > 0.0103, 1, 0))
+#total number of texts contain with a proportion more than 0.35
+sum(freq_upp== 1)
+```
+
+## negative words and obscenity
+```{r}
+#negative words(use of external word list). This word list contain negative sentiment and obscenity
+neg_word <- readLines("negative-words.txt")
+neg_word <- data.frame(neg_word)
+#delete irrelevant info
+neg_word <- neg_word[-c(1:35),]
+neg_word <- as.list(neg_word)
+#create negative dictionary
+negdict <- dictionary(list(neg_word = c(neg_word)))
+neg_dfm <- dfm_lookup(dfm_train, dictionary = negdict, valuetype = "glob")
+
+```
+##not using:F1 score decreases
+
+```{r}
+#proportion of negative words compared to the total words in each text
+neg_df <- dfm_lookup(dfm_train, dictionary = negdict, valuetype = "glob") %>% data.frame()
+neg_df <- neg_df %>%
+  mutate(label = neg_df$neg_word/nchar(train$text))
+
+prop <- neg_df$neg_word/nchar(train$text)
+#proportion of negative words to all words in attack comment
+t <- neg_df$neg_word[which(train$attack == 1)]/nchar(train$text[which(train$attack == 1)])
+hist(t,breaks= 10)
+mean(t)
+prop_neg <- factor(if_else(prop > 0.015, 1, 0))
+#total number of texts contain with a proportion more than 0.35
+sum(prop_neg == 1)
+```
+
+
+```{r}
+toxic <- neg_df %>%
+  mutate(attack = train$attack) %>%
+  filter(attack == 1) 
+sum(toxic$label)
+
+non_toxic <- neg_df %>%
+  mutate(attack = train$attack) %>%
+  filter(attack == 0) 
+sum(non_toxic$label)
+df <- c(26338, 13774)
+N <- c("toxic_comments", "non-toxic_comments")
+barplot(df, names.arg=N,xlab="Types of Comments", ylab="negative and obsence words", main="Negative sentiment and obscentiy in Different Types of Comments")
+```
+
+##proportion of negative and positive words
+
+```{r}
+pos_word <- readLines("positive-words.txt")
+pos_word <- data.frame(pos_word)
+pos_word <- pos_word[-c(1:35),]
+dict <- dictionary(list(positive = c(pos_word), negative = c(neg_word)))
+dfm_dict <- dfm_lookup(dfm_train, dictionary = dict, valuetype = "glob") dfm_dict <- convert(dfm_dict, to = "data.frame") 
+
+#assigning label to comment (1 is toxic comment, 0 is non-toxic comment)
+dfm_dict <- dfm_dict %>%
+  mutate(label = case_when(positive == negative ~ "0", positive > negative~ "0", negative > positive ~ "1", positive == 0 & negative == 0 ~ "0"))
+sum(dfm_dict$label == 1) #5255 toxic comment as the proportion of negative words is larger than positive words
+prop_senti <- dfm_dict$label
+```

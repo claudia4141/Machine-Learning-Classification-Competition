@@ -1,0 +1,51 @@
+---
+title: "R Notebook"
+---
+
+##Descriptive statistics
+```{r}
+#number of attack and non-attack comment
+table(train$attack)
+train$attack <- as.factor(train$attack)
+png("no_comments.png")
+p <- ggplot(aes(x=attack), data = train)+
+  geom_bar(fill = "blue")
+p + theme_bw() + labs(title = "Number of attack and non-attack comments")
+dev.off()
+```
+
+```{r}
+library(quanteda.textplots)
+#summary(cor_train)
+toks <- tokens(cor_train, remove_punct = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_numbers = TRUE)%>%
+  tokens_remove(pattern = stopwords("en")) 
+dfm_train <- dfm(toks)
+dfm_train <- dfm_trim(dfm_train, min_docfreq = 5)
+topfeatures(dfm_train, 20)
+#wordcloud for attack comment
+png("attack_wc.png")
+attackdfm <- dfm_subset(dfm_train, attack == 1)
+textplot_wordcloud(attackdfm, max_words = 200, min_size=1, color = "red")
+dev.off()
+#wordcloud for non-attack comment
+png("nonattack_wc.png")
+nonattackdfm <- dfm_subset(dfm_train, attack == 0)
+textplot_wordcloud(nonattackdfm, max_words = 200, min_size=1, color = "blue")
+dev.off()
+```
+
+```{r}
+png("ld_attack.png")
+tstat_lex <- textstat_lexdiv(attackdfm)
+plot(tstat_lex$TTR,  xaxt = 'n', xlab = NULL, ylab = "TTR")
+grid()
+axis(1, at = seq_len(nrow(tstat_lex)), labels = train$attack == "1")
+dev.off()
+png("ld_non.png")
+tstat_lex <- textstat_lexdiv(nonattackdfm)
+plot(tstat_lex$TTR,  xaxt = 'n', xlab = NULL, ylab = "TTR")
+grid()
+axis(1, at = seq_len(nrow(tstat_lex)), labels = train$attack == "0")
+dev.off()
+```
+

@@ -1,0 +1,169 @@
+---
+title: "nb model and word embedding"
+
+---
+
+
+```{r}
+#create tokens for training dfm
+toks_train <- tokens(cor_train, remove_separators = TRUE,remove_punct = TRUE, remove_symbols = TRUE, remove_url = TRUE, remove_numbers = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(pattern = stopwords("en")) %>%
+  tokens_wordstem()
+toks_train <- tokens_ngrams(toks_train, n=1:3) 
+dfm_train <- dfm(toks_train)
+dfm_train <- dfm_weight(dfm_train, scheme = "prop")
+dfm_train <- dfm_trim(dfm_train, min_docfreq  = 5)
+
+```
+
+## Basic NB model 
+```{r}
+library(quanteda.textmodels)
+# training Naive Bayes model
+nb <- textmodel_nb(dfm_train[idx,], docvars(cor_train, "attack")[idx])
+# predicting labels for test set
+preds <- predict(nb, newdata = dfm_train[-idx,])
+# computing the confusion matrix
+cm <- table(docvars(cor_train, "attack")[-idx], preds)
+F1(cm) #F1 score: 0.65625
+summary(nb)
+```
+
+
+
+## add custom features to NB model
+```{r}
+#combine all the features to dfm
+dfm_train <- cbind(dfm_train, neg_dfm, matrix(seq_exc), matrix(seq_ast), matrix(seq_upp))
+#NB model
+nb <- textmodel_nb(dfm_train[idx,], docvars(cor_train, "attack")[idx])
+# predicting labels for test set
+preds <- predict(nb, newdata = dfm_train[-idx,])
+# computing the confusion matrix
+cm <- table(docvars(cor_train, "attack")[-idx], preds)
+F1(cm)
+# dfm_train: 0.6266491
+#dfm_train, neg_dfm: 0.6398929
+#dfm_train, neg_dfm, freq_length: 0.6440198
+#dfm_train, neg_dfm, freq_length, freq_exc: 0.64464392
+#dfm_train, neg_dfm, freq_length, freq_exc, freq_ast: 0.6450304
+#dfm_train, neg_df, freq_length, freq_exc, freq_ast, freq_upp: 0.6506849
+#dfm_train, neg_df, freq_length, freq_exc, freq_ast, freq_upp, freq_que: 0.6599569
+```
+
+
+
+
+
+## Word embeddings
+```{r}
+#pre-processing the training data
+train <- train %>% tolower() %>% removePunctuation() %>%
+    removeNumbers() %>% stripWhitespace() %>% trimws()
+#train word2vec model
+word2vec_model <- word2vec::word2vec(x = train, type = "skip-gram", dim = 300, window = 10)
+embedding_matrix <- as.matrix(word2vec_model)
+tail(embedding_matrix[,1:10])
+#similar word, testing the model
+predict(word2vec_model, newdata = c("shit"), type = "nearest", top_n = 10)
+predict(word2vec_model, newdata = c("prick"), type = "nearest", top_n = 10)
+predict(word2vec_model, newdata = c("bitch"), type = "nearest", top_n = 10)
+#save the model
+write.word2vec(word2vec_model, file = "word2vec_model.bin")
+```
+
+
+```{r}
+#my459 lecture 10
+#convert bin to text 
+bin_to_txt("word2vec_model.bin", "word2vec_model.txt")
+#extracting word embeddings for words in corpus
+w2v <- readr::read_delim("word2vec_model.txt", 
+                  skip=1, delim=" ", quote="",
+                  col_names=c("word", paste0("V", 1:300)))
+w2v <- w2v[w2v$word %in% featnames(dfm_train),]
+head(w2v)
+#creating new feature matrix for embeddings
+embed <- matrix(NA, nrow=ndoc(dfm_train), ncol=300)
+for (i in 1:ndoc(dfm_train)){
+  if (i %% 300 == 0) message(i, '/', ndoc(dfm_train))
+  # extract word counts
+  vec <- as.numeric(dfm_train[i,])
+  # keep words with counts of 2 or more
+  doc_words <- featnames(dfm_train)[vec>2]
+  # extract embeddings for those words
+  embed_vec <- w2v[w2v$word %in% doc_words, 2:301]
+  # aggregate from word- to document-level embeddings by taking AVG
+  embed[i,] <- colMeans(embed_vec, na.rm=TRUE)
+  # if no words in embeddings, simply set to 0
+  if (nrow(embed_vec)==0) embed[i,] <- 0
+}
+```
+## predicting the model(0.01234568) why is it even worse than no word embedding???
+```{r}
+#glm model
+lasso <- cv.glmnet(embed[idx,], train$attack[idx], 
+	family="binomial", alpha=1, nfolds=5, parallel=TRUE, intercept=TRUE)
+preds <- predict(lasso, embed[-idx,], type="class")
+cm1 <- table(train$attack[-idx], preds)
+F1(cm1) #0.01234568
+```
+
+
+```{r}
+library("xgboost")
+X <- as(cbind(dfm_train, embed), "dgCMatrix")
+tryEta <- c(1,2)
+tryDepths <- c(1,2)
+# placeholders for now
+bestEta=NA
+bestDepth=NA
+bestAcc=0
+
+for(eta in tryEta){
+  for(dp in tryDepths){ 
+    bst <- xgb.cv(data = X[idx,], 
+            label = docvars(cor_train, "attack")[idx], 
+            max.depth = dp,
+          eta = eta, 
+          nthread = 4,
+          nround = 500,
+          nfold=5,
+          print_every_n = 100L,
+          objective = "binary:logistic")
+    # cross-validated accuracy
+    acc <- 1-mean(tail(bst$evaluation_log$test_logloss_mean))
+        cat("Results for eta=",eta," and depth=", dp, " : ",
+                acc," accuracy.\n",sep="")
+        if(acc>bestAcc){
+         bestEta=eta
+         bestAcc=acc
+         bestDepth=dp
+        }
+    }
+  }
+```
+
+
+```{r}
+#Results for eta=1 and depth=1 : 0.5823675 accuracy.
+#running best model
+rf <- xgboost(data = X[idx,], 
+    label = docvars(cor_train, "attack")[idx], 
+    max.depth = bestDepth,
+    eta = bestEta, 
+    nthread = 4,
+    nround = 500,
+        print_every_n=100L,
+    objective = "binary:logistic")
+
+preds <- predict(rf, X[-idx,])
+mean(preds)
+predicted_class <- factor(if_else(preds >  0.2, 1, 0))
+tab <- table(docvars(cor_train, "attack")[-idx], predicted_class)
+F1(tab) #F1 score:0.6403026
+```
+
+
+
